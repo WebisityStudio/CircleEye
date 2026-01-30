@@ -8,17 +8,36 @@ export const APP_CONFIG = {
   websiteUrl: 'https://circleukgroup.co.uk',
 };
 
-// Gemini Live API configuration
+// Gemini API configuration - Agentic Hand-off Pattern
+// Two models working together: Scout (Live) + Judge (Pro)
 export const GEMINI_CONFIG = {
   apiKey: process.env.EXPO_PUBLIC_GEMINI_API_KEY || '',
-  // NOTE: Gemini 3 (gemini-3-flash-preview, gemini-3-pro-preview) does NOT support Live API yet!
-  // For real-time streaming with video/audio, we must use Gemini 2.5 Flash Native Audio
-  // This is the most advanced model for Live API with native audio capabilities
+
+  // ============================================
+  // THE SCOUT: Gemini 2.5 Flash Live
+  // Role: Real-time companion, data collection
+  // ============================================
+  // Fast, conversational, interruptible
+  // Asks follow-up questions for better evidence
+  liveModel: 'gemini-2.5-flash-preview-native-audio-dialog',
+
+  // ============================================
+  // THE JUDGE: Gemini 3 Pro
+  // Role: Deep reasoning, compliance analysis
+  // ============================================
+  // Slow, thorough, massive context
+  // Cross-references UK HSE & ISO 45001
+  proModel: 'gemini-3-pro-preview',
+
+  // Legacy alias (points to live model for backward compat)
   model: 'gemini-2.5-flash-preview-native-audio-dialog',
-  // Frame capture settings
-  frameCaptureFPS: 1, // 1 frame per second for analysis
-  frameQuality: 0.5, // JPEG quality (0-1)
+
+  // Frame capture settings (for high-res snapshots on hazard detection)
+  frameCaptureFPS: 1, // 1 frame per second for live analysis
+  frameQuality: 0.5, // JPEG quality for streaming (0-1)
+  snapshotQuality: 0.9, // High quality for tagged hazards
   frameMaxWidth: 1280,
+
   // Audio settings
   audioSampleRate: 16000, // 16kHz for input
   audioOutputSampleRate: 24000, // 24kHz for output

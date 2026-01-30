@@ -11,16 +11,20 @@ import {
 import { router, useLocalSearchParams } from 'expo-router';
 import { CameraView, CameraType, useCameraPermissions } from 'expo-camera';
 import { Audio } from 'expo-av';
+import * as Speech from 'expo-speech';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSessionStore } from '../../src/stores/sessionStore';
 import { useAuthStore } from '../../src/stores/authStore';
-import { createGeminiLiveClient, GeminiLiveClient } from '../../src/services/geminiLive';
-import { addFinding, updateSessionStatus, getSessionFindings } from '../../src/services/sessions';
-import { Button, Badge, SeverityBadge, CategoryBadge } from '../../src/components/ui';
+import { createGeminiFlashClient, GeminiFlashClient } from '../../src/services/geminiFlashService';
+import { addFinding, updateSessionStatus } from '../../src/services/sessions';
+import { Button, SeverityBadge, CategoryBadge } from '../../src/components/ui';
 import { COLORS, SPACING, TYPOGRAPHY, GEMINI_CONFIG } from '../../src/config/constants';
 import type { SessionFinding } from '../../src/types/session';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+
+// Polling interval in milliseconds (1.5 seconds for "real-time" feel)
+const ANALYSIS_INTERVAL_MS = 1500;
 
 export default function LiveInspectionScreen() {
   const { sessionId } = useLocalSearchParams<{ sessionId: string }>();
@@ -44,17 +48,19 @@ export default function LiveInspectionScreen() {
 
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [facing, setFacing] = useState<CameraType>('back');
-  const [isRecording, setIsRecording] = useState(false);
   const [showFindingToast, setShowFindingToast] = useState(false);
   const [latestFinding, setLatestFinding] = useState<SessionFinding | null>(null);
   const [connectionError, setConnectionError] = useState<string | null>(null);
-  const [isConnecting, setIsConnecting] = useState(true);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [analysisCount, setAnalysisCount] = useState(0);
 
   const cameraRef = useRef<CameraView>(null);
-  const geminiClientRef = useRef<GeminiLiveClient | null>(null);
+  const geminiClientRef = useRef<GeminiFlashClient | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const frameIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const analysisIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const toastAnimation = useRef(new Animated.Value(0)).current;
+  const lastFrameRef = useRef<string | null>(null);
 
   // Request permissions and initialize
   useEffect(() => {
@@ -72,7 +78,7 @@ export default function LiveInspectionScreen() {
         }
       }
 
-      // Request audio permission
+      // Request audio permission (for potential future voice input)
       const { granted: audioGranted } = await Audio.requestPermissionsAsync();
       if (!audioGranted) {
         Alert.alert(
@@ -82,12 +88,16 @@ export default function LiveInspectionScreen() {
         );
       }
 
-      // Initialize Gemini client
+      // Initialize Gemini Flash client
       initializeGemini();
 
-      // Start timer
+      // Start elapsed time timer
       timerRef.current = setInterval(() => {
-        updateElapsedTime(Math.floor((Date.now() - (useSessionStore.getState().startTime?.getTime() || Date.now())) / 1000));
+        updateElapsedTime(
+          Math.floor(
+            (Date.now() - (useSessionStore.getState().startTime?.getTime() || Date.now())) / 1000
+          )
+        );
       }, 1000);
     };
 
@@ -98,115 +108,151 @@ export default function LiveInspectionScreen() {
     };
   }, []);
 
-  const initializeGemini = useCallback(async () => {
+  const initializeGemini = useCallback(() => {
     if (!GEMINI_CONFIG.apiKey) {
       console.warn('Gemini API key not configured');
-      setConnectionError('AI service not configured. Please add EXPO_PUBLIC_GEMINI_API_KEY to your .env file.');
-      setIsConnecting(false);
+      setConnectionError(
+        'AI service not configured. Please add EXPO_PUBLIC_GEMINI_API_KEY to your .env file.'
+      );
       return;
     }
 
-    console.log('Initializing Gemini with API key:', GEMINI_CONFIG.apiKey.substring(0, 10) + '...');
-    setIsConnecting(true);
+    console.log('Initializing Gemini 3 Flash client...');
     setConnectionError(null);
 
-    try {
-      geminiClientRef.current = createGeminiLiveClient({
-        onTextResponse: (text) => {
-          console.log('AI Text Response:', text);
-          setLastAIMessage(text);
-        },
-        onAudioResponse: (audioData) => {
-          // Play audio response
-          playAudioResponse(audioData);
-        },
-        onFinding: async (findingData) => {
-          // Save finding to database
-          if (sessionId) {
-            try {
-              const savedFinding = await addFinding(sessionId, {
-                timestamp_seconds: findingData.timestamp_seconds || 0,
-                category: findingData.category!,
-                severity: findingData.severity!,
-                title: findingData.title!,
-                description: findingData.description || null,
-                location_hint: findingData.location_hint || null,
-                ai_confidence: findingData.ai_confidence || null,
-              });
+    geminiClientRef.current = createGeminiFlashClient({
+      onTextResponse: (text) => {
+        console.log('AI Response:', text);
+        setLastAIMessage(text);
+        // Speak the response using text-to-speech
+        speakResponse(text);
+      },
+      onFinding: async (findingData) => {
+        // Save finding to database
+        if (sessionId) {
+          try {
+            const savedFinding = await addFinding(sessionId, {
+              timestamp_seconds: findingData.timestamp_seconds || 0,
+              category: findingData.category!,
+              severity: findingData.severity!,
+              title: findingData.title!,
+              description: findingData.description || null,
+              location_hint: findingData.location_hint || null,
+              ai_confidence: findingData.ai_confidence || null,
+            });
 
-              // Update local state
-              addFindingToStore(savedFinding);
-              showFindingNotification(savedFinding);
-            } catch (err) {
-              console.error('Failed to save finding:', err);
-            }
+            // Update local state
+            addFindingToStore(savedFinding);
+            showFindingNotification(savedFinding);
+          } catch (err) {
+            console.error('Failed to save finding:', err);
           }
-        },
-        onConnectionChange: (connected) => {
-          console.log('Connection change:', connected);
-          setConnectedToAI(connected);
-          setIsConnecting(false);
-          if (connected) {
-            setConnectionError(null);
-            startFrameCapture();
-          } else {
-            stopFrameCapture();
-          }
-        },
-        onError: (error) => {
-          console.error('Gemini error:', error);
-          setConnectionError(error.message);
-          setIsConnecting(false);
-          setError(error.message);
-        },
-      });
+        }
+      },
+      onError: (error) => {
+        console.error('Gemini error:', error);
+        setConnectionError(error.message);
+        setError(error.message);
+      },
+    });
 
-      console.log('Connecting to Gemini Live API...');
-      await geminiClientRef.current.connect();
-      console.log('Gemini connection successful');
-    } catch (err: any) {
-      console.error('Failed to initialize Gemini:', err);
-      setConnectionError(err.message || 'Failed to connect to AI service');
-      setIsConnecting(false);
-      setError('Failed to connect to AI service');
-    }
+    // Start the session
+    geminiClientRef.current.startSession();
+    setConnectedToAI(true);
+
+    // Start the high-frequency analysis loop
+    startAnalysisLoop();
   }, [sessionId]);
 
-  const startFrameCapture = useCallback(() => {
-    console.log('Starting frame capture at', GEMINI_CONFIG.frameCaptureFPS, 'FPS');
-    // Capture frames at configured FPS
-    frameIntervalRef.current = setInterval(async () => {
-      if (cameraRef.current && geminiClientRef.current?.isReady()) {
-        try {
-          const photo = await cameraRef.current.takePictureAsync({
-            quality: GEMINI_CONFIG.frameQuality,
-            base64: true,
-            skipProcessing: true,
-          });
+  /**
+   * Speak AI response using Expo Speech (text-to-speech)
+   * This is more secure - only the user can hear via earbuds
+   */
+  const speakResponse = async (text: string) => {
+    // Skip trivial responses like "Area clear" to reduce noise
+    const skipPhrases = ['area clear', 'looking good', 'all clear', 'no issues'];
+    const lowerText = text.toLowerCase();
 
-          if (photo?.base64) {
-            console.log('Sending frame, size:', Math.round(photo.base64.length / 1024), 'KB');
-            geminiClientRef.current.sendVideoFrame(photo.base64);
-          }
-        } catch (err) {
-          // Ignore capture errors during rapid capture
+    // Always speak findings and warnings
+    const isImportant =
+      text.length > 50 ||
+      lowerText.includes('hazard') ||
+      lowerText.includes('warning') ||
+      lowerText.includes('caution') ||
+      lowerText.includes('danger') ||
+      lowerText.includes('blocked') ||
+      lowerText.includes('risk');
+
+    if (!isImportant && skipPhrases.some((phrase) => lowerText.includes(phrase))) {
+      console.log('Skipping TTS for trivial response');
+      return;
+    }
+
+    // Stop any ongoing speech
+    if (isSpeaking) {
+      await Speech.stop();
+    }
+
+    setIsSpeaking(true);
+
+    try {
+      await Speech.speak(text, {
+        language: 'en-GB', // British English for UK compliance context
+        pitch: 1.0,
+        rate: 1.1, // Slightly faster for efficiency
+        onDone: () => setIsSpeaking(false),
+        onError: () => setIsSpeaking(false),
+      });
+    } catch (error) {
+      console.error('Speech error:', error);
+      setIsSpeaking(false);
+    }
+  };
+
+  /**
+   * Start the high-frequency analysis loop
+   * This polls Gemini 3 Flash every 1.5 seconds for "real-time" perception
+   */
+  const startAnalysisLoop = useCallback(() => {
+    console.log('Starting Gemini 3 Flash analysis loop...');
+
+    analysisIntervalRef.current = setInterval(async () => {
+      if (!cameraRef.current || !geminiClientRef.current) return;
+      if (geminiClientRef.current.isBusy()) return;
+
+      try {
+        setIsAnalyzing(true);
+
+        // Capture frame
+        const photo = await cameraRef.current.takePictureAsync({
+          quality: GEMINI_CONFIG.frameQuality,
+          base64: true,
+          skipProcessing: true,
+        });
+
+        if (photo?.base64) {
+          lastFrameRef.current = photo.base64;
+          console.log('Sending frame to Gemini 3 Flash, size:', Math.round(photo.base64.length / 1024), 'KB');
+
+          // Analyze with Gemini 3 Flash
+          await geminiClientRef.current.analyzeFrame(photo.base64);
+          setAnalysisCount((prev) => prev + 1);
         }
+      } catch (err) {
+        // Ignore capture errors during rapid capture
+        console.log('Frame capture error (non-critical):', err);
+      } finally {
+        setIsAnalyzing(false);
       }
-    }, 1000 / GEMINI_CONFIG.frameCaptureFPS);
+    }, ANALYSIS_INTERVAL_MS);
   }, []);
 
-  const stopFrameCapture = useCallback(() => {
-    if (frameIntervalRef.current) {
-      clearInterval(frameIntervalRef.current);
-      frameIntervalRef.current = null;
+  const stopAnalysisLoop = useCallback(() => {
+    if (analysisIntervalRef.current) {
+      clearInterval(analysisIntervalRef.current);
+      analysisIntervalRef.current = null;
     }
   }, []);
-
-  const playAudioResponse = async (audioData: ArrayBuffer) => {
-    // TODO: Implement audio playback
-    // This requires converting PCM to a playable format
-    console.log('Audio response received:', audioData.byteLength, 'bytes');
-  };
 
   const showFindingNotification = (finding: SessionFinding) => {
     setLatestFinding(finding);
@@ -219,7 +265,7 @@ export default function LiveInspectionScreen() {
         duration: 300,
         useNativeDriver: true,
       }),
-      Animated.delay(3000),
+      Animated.delay(4000), // Show longer for findings
       Animated.timing(toastAnimation, {
         toValue: 0,
         duration: 300,
@@ -234,32 +280,29 @@ export default function LiveInspectionScreen() {
     if (timerRef.current) {
       clearInterval(timerRef.current);
     }
-    stopFrameCapture();
-    geminiClientRef.current?.disconnect();
+    stopAnalysisLoop();
+    geminiClientRef.current?.endSession();
+    Speech.stop();
   };
 
   const handleEndInspection = async () => {
-    Alert.alert(
-      'End Inspection?',
-      'This will stop the AI analysis and generate your report.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'End & Generate Report',
-          onPress: async () => {
-            cleanup();
-            endSession();
+    Alert.alert('End Inspection?', 'This will stop the AI analysis and generate your report.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'End & Generate Report',
+        onPress: async () => {
+          cleanup();
+          endSession();
 
-            if (sessionId) {
-              await updateSessionStatus(sessionId, 'completed', elapsedSeconds);
-            }
+          if (sessionId) {
+            await updateSessionStatus(sessionId, 'completed', elapsedSeconds);
+          }
 
-            // Navigate to report
-            router.replace(`/history/${sessionId}`);
-          },
+          // Navigate to report
+          router.replace(`/history/${sessionId}`);
         },
-      ]
-    );
+      },
+    ]);
   };
 
   const formatTime = (seconds: number): string => {
@@ -282,11 +325,7 @@ export default function LiveInspectionScreen() {
   return (
     <View style={styles.container}>
       {/* Camera View */}
-      <CameraView
-        ref={cameraRef}
-        style={styles.camera}
-        facing={facing}
-      >
+      <CameraView ref={cameraRef} style={styles.camera} facing={facing}>
         {/* Header Overlay */}
         <SafeAreaView style={styles.headerOverlay}>
           <View style={styles.header}>
@@ -297,13 +336,22 @@ export default function LiveInspectionScreen() {
               <Text style={styles.duration}>{formatTime(elapsedSeconds)}</Text>
             </View>
             <View style={styles.headerRight}>
-              <View style={[
-                styles.connectionDot,
-                isConnectedToAI && styles.connectionDotConnected,
-                connectionError && styles.connectionDotError
-              ]} />
+              <View
+                style={[
+                  styles.connectionDot,
+                  isConnectedToAI && styles.connectionDotConnected,
+                  connectionError && styles.connectionDotError,
+                  isAnalyzing && styles.connectionDotAnalyzing,
+                ]}
+              />
               <Text style={styles.connectionText}>
-                {connectionError ? 'Error' : isConnectedToAI ? 'AI Connected' : isConnecting ? 'Connecting...' : 'Disconnected'}
+                {connectionError
+                  ? 'Error'
+                  : isAnalyzing
+                  ? 'Analyzing...'
+                  : isConnectedToAI
+                  ? 'Gemini 3 Active'
+                  : 'Initializing'}
               </Text>
             </View>
           </View>
@@ -335,7 +383,7 @@ export default function LiveInspectionScreen() {
               <Text style={styles.findingToastTitle}>{latestFinding.title}</Text>
               {latestFinding.location_hint && (
                 <Text style={styles.findingToastLocation}>
-                  📍 {latestFinding.location_hint}
+                  {latestFinding.location_hint}
                 </Text>
               )}
             </View>
@@ -345,11 +393,8 @@ export default function LiveInspectionScreen() {
         {/* Connection Error Overlay */}
         {connectionError && (
           <View style={styles.errorOverlay}>
-            <Text style={styles.errorText}>⚠️ {connectionError}</Text>
-            <TouchableOpacity
-              style={styles.retryButton}
-              onPress={() => initializeGemini()}
-            >
+            <Text style={styles.errorText}>{connectionError}</Text>
+            <TouchableOpacity style={styles.retryButton} onPress={() => initializeGemini()}>
               <Text style={styles.retryButtonText}>Retry Connection</Text>
             </TouchableOpacity>
           </View>
@@ -358,9 +403,12 @@ export default function LiveInspectionScreen() {
         {/* AI Message Overlay */}
         {lastAIMessage && !connectionError && (
           <View style={styles.aiMessageOverlay}>
-            <Text style={styles.aiMessageText} numberOfLines={3}>
-              🤖 {lastAIMessage}
-            </Text>
+            <View style={styles.aiMessageContainer}>
+              {isSpeaking && <Text style={styles.speakingIndicator}>Speaking...</Text>}
+              <Text style={styles.aiMessageText} numberOfLines={3}>
+                {lastAIMessage}
+              </Text>
+            </View>
           </View>
         )}
 
@@ -371,10 +419,7 @@ export default function LiveInspectionScreen() {
             <Text style={styles.findingsLabel}>Findings</Text>
           </View>
 
-          <TouchableOpacity
-            style={styles.endButton}
-            onPress={handleEndInspection}
-          >
+          <TouchableOpacity style={styles.endButton} onPress={handleEndInspection}>
             <View style={styles.endButtonInner}>
               <Text style={styles.endButtonText}>End</Text>
             </View>
@@ -382,9 +427,9 @@ export default function LiveInspectionScreen() {
 
           <TouchableOpacity
             style={styles.flipButton}
-            onPress={() => setFacing(f => f === 'back' ? 'front' : 'back')}
+            onPress={() => setFacing((f) => (f === 'back' ? 'front' : 'back'))}
           >
-            <Text style={styles.flipButtonText}>🔄</Text>
+            <Text style={styles.flipButtonText}>Flip</Text>
           </TouchableOpacity>
         </SafeAreaView>
       </CameraView>
@@ -426,7 +471,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: SPACING.md,
     paddingVertical: SPACING.sm,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(0,0,0,0.6)',
   },
   headerLeft: {
     flex: 1,
@@ -447,9 +492,9 @@ const styles = StyleSheet.create({
     gap: SPACING.xs,
   },
   connectionDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
     backgroundColor: COLORS.warning,
   },
   connectionDotConnected: {
@@ -458,9 +503,13 @@ const styles = StyleSheet.create({
   connectionDotError: {
     backgroundColor: COLORS.error,
   },
+  connectionDotAnalyzing: {
+    backgroundColor: COLORS.info,
+  },
   connectionText: {
     fontSize: TYPOGRAPHY.fontSize.sm,
     color: '#FFF',
+    fontWeight: '500',
   },
 
   // Finding Toast
@@ -472,7 +521,7 @@ const styles = StyleSheet.create({
     zIndex: 20,
   },
   findingToastContent: {
-    backgroundColor: 'rgba(0,0,0,0.85)',
+    backgroundColor: 'rgba(0,0,0,0.9)',
     borderRadius: 12,
     padding: SPACING.md,
     borderLeftWidth: 4,
@@ -502,13 +551,21 @@ const styles = StyleSheet.create({
     right: SPACING.md,
     zIndex: 15,
   },
+  aiMessageContainer: {
+    backgroundColor: 'rgba(30, 58, 95, 0.95)',
+    padding: SPACING.md,
+    borderRadius: 12,
+  },
+  speakingIndicator: {
+    fontSize: TYPOGRAPHY.fontSize.xs,
+    color: COLORS.success,
+    marginBottom: 4,
+    fontWeight: '600',
+  },
   aiMessageText: {
     fontSize: TYPOGRAPHY.fontSize.base,
     color: '#FFF',
-    backgroundColor: 'rgba(30, 58, 95, 0.9)',
-    padding: SPACING.md,
-    borderRadius: 12,
-    overflow: 'hidden',
+    lineHeight: 22,
   },
 
   // Bottom Controls
@@ -521,7 +578,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-around',
     alignItems: 'center',
     paddingVertical: SPACING.lg,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(0,0,0,0.6)',
   },
   findingsCounter: {
     alignItems: 'center',
@@ -566,7 +623,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   flipButtonText: {
-    fontSize: 24,
+    fontSize: TYPOGRAPHY.fontSize.sm,
+    color: '#FFF',
+    fontWeight: '500',
   },
 
   // Error Overlay

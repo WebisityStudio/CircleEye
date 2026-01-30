@@ -1,6 +1,7 @@
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { COLORS, APP_CONFIG, REPORT_CONFIG } from '../config/constants';
+import { generateComplianceAnalysis, ComplianceAnalysis } from '../services/geminiProService';
 import type { InspectionSession, SessionFinding, InspectionReport } from '../types/session';
 
 interface ReportData {
@@ -12,10 +13,15 @@ interface ReportData {
 }
 
 /**
- * Generate PDF report from session data
+ * Generate PDF report from session data with Gemini 3 Pro compliance analysis
  */
 export async function generateReportPDF(data: ReportData): Promise<string> {
-  const html = buildReportHTML(data);
+  // Generate compliance analysis using Gemini 3 Pro
+  console.log('Generating compliance analysis with Gemini 3 Pro...');
+  const complianceAnalysis = await generateComplianceAnalysis(data.session, data.findings);
+  console.log('Compliance analysis complete:', complianceAnalysis.overallRiskLevel);
+
+  const html = buildReportHTML(data, complianceAnalysis);
 
   const { uri } = await Print.printToFileAsync({
     html,
@@ -39,9 +45,9 @@ export async function sharePDF(uri: string, title: string): Promise<void> {
 }
 
 /**
- * Build HTML for PDF report
+ * Build HTML for PDF report with Gemini 3 Pro compliance analysis
  */
-function buildReportHTML(data: ReportData): string {
+function buildReportHTML(data: ReportData, analysis: ComplianceAnalysis): string {
   const { session, findings, inspectorName, inspectorEmail } = data;
 
   const formatDate = (dateString: string) => {
@@ -82,32 +88,105 @@ function buildReportHTML(data: ReportData): string {
     return colors[category] || COLORS.textMuted;
   };
 
+  const getRiskLevelColor = (level: string) => {
+    const colors: Record<string, string> = {
+      critical: COLORS.critical,
+      high: COLORS.high,
+      medium: COLORS.medium,
+      low: COLORS.success,
+    };
+    return colors[level] || COLORS.textMuted;
+  };
+
+  const getPriorityLabel = (priority: string) => {
+    const labels: Record<string, string> = {
+      immediate: 'IMMEDIATE ACTION',
+      urgent: 'URGENT',
+      soon: 'SOON',
+      scheduled: 'SCHEDULED',
+    };
+    return labels[priority] || priority.toUpperCase();
+  };
+
   const criticalCount = findings.filter((f) => f.severity === 'critical').length;
   const highCount = findings.filter((f) => f.severity === 'high').length;
   const mediumCount = findings.filter((f) => f.severity === 'medium').length;
   const lowCount = findings.filter((f) => f.severity === 'low').length;
 
-  const findingsHTML = findings
+  // Build analyzed findings HTML
+  const analyzedFindingsHTML = analysis.keyFindings
     .map(
-      (finding, index) => `
+      (af, index) => `
       <div class="finding">
         <div class="finding-header">
           <span class="finding-number">#${index + 1}</span>
-          <span class="badge severity" style="background-color: ${getSeverityColor(finding.severity)}20; color: ${getSeverityColor(finding.severity)}">
-            ${finding.severity.toUpperCase()}
+          <span class="badge severity" style="background-color: ${getSeverityColor(af.originalFinding.severity)}20; color: ${getSeverityColor(af.originalFinding.severity)}">
+            ${af.originalFinding.severity.toUpperCase()}
           </span>
-          <span class="badge category" style="background-color: ${getCategoryColor(finding.category)}20; color: ${getCategoryColor(finding.category)}">
-            ${finding.category}
+          <span class="badge category" style="background-color: ${getCategoryColor(af.originalFinding.category)}20; color: ${getCategoryColor(af.originalFinding.category)}">
+            ${af.originalFinding.category}
+          </span>
+          <span class="badge priority" style="background-color: ${af.remediationPriority === 'immediate' ? COLORS.critical : af.remediationPriority === 'urgent' ? COLORS.high : COLORS.medium}20; color: ${af.remediationPriority === 'immediate' ? COLORS.critical : af.remediationPriority === 'urgent' ? COLORS.high : COLORS.medium}">
+            ${getPriorityLabel(af.remediationPriority)}
           </span>
         </div>
-        <h4 class="finding-title">${finding.title}</h4>
-        ${finding.description ? `<p class="finding-description">${finding.description}</p>` : ''}
-        ${finding.location_hint ? `<p class="finding-location">📍 ${finding.location_hint}</p>` : ''}
-        <p class="finding-timestamp">@ ${Math.floor(finding.timestamp_seconds / 60)}:${String(Math.floor(finding.timestamp_seconds % 60)).padStart(2, '0')}</p>
+        <h4 class="finding-title">${af.originalFinding.title}</h4>
+        ${af.originalFinding.description ? `<p class="finding-description">${af.originalFinding.description}</p>` : ''}
+        ${af.originalFinding.location_hint ? `<p class="finding-location">📍 ${af.originalFinding.location_hint}</p>` : ''}
+
+        <div class="compliance-analysis">
+          <div class="analysis-row">
+            <span class="analysis-label">Compliance Impact:</span>
+            <span class="analysis-value">${af.complianceImpact}</span>
+          </div>
+          <div class="analysis-row">
+            <span class="analysis-label">Relevant Standard:</span>
+            <span class="analysis-value standard-ref">${af.relevantStandard}</span>
+          </div>
+          <div class="analysis-row">
+            <span class="analysis-label">Remediation Timeline:</span>
+            <span class="analysis-value">${af.estimatedRemediationTime}</span>
+          </div>
+          <div class="analysis-row">
+            <span class="analysis-label">If Not Addressed:</span>
+            <span class="analysis-value warning-text">${af.potentialConsequences}</span>
+          </div>
+        </div>
       </div>
     `
     )
     .join('');
+
+  // Build recommendations HTML
+  const recommendationsHTML = analysis.recommendations
+    .map(
+      (rec) => `
+      <tr>
+        <td class="priority-cell">${rec.priority}</td>
+        <td>${rec.action}</td>
+        <td>${rec.responsibility}</td>
+        <td>${rec.timeline}</td>
+        <td class="standard-cell">${rec.standard}</td>
+      </tr>
+    `
+    )
+    .join('');
+
+  // Build regulatory references HTML
+  const regulatoryHTML = analysis.regulatoryReferences
+    .map(
+      (ref) => `
+      <div class="reg-item">
+        <div class="reg-name">${ref.regulation}</div>
+        <div class="reg-section">${ref.section}</div>
+        <div class="reg-relevance">${ref.relevance}</div>
+      </div>
+    `
+    )
+    .join('');
+
+  // Build next steps HTML
+  const nextStepsHTML = analysis.nextSteps.map((step) => `<li>${step}</li>`).join('');
 
   return `
     <!DOCTYPE html>
@@ -155,6 +234,17 @@ function buildReportHTML(data: ReportData): string {
           margin-top: 20px;
         }
 
+        .ai-badge {
+          display: inline-block;
+          margin-top: 10px;
+          padding: 4px 12px;
+          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          color: white;
+          font-size: 11px;
+          font-weight: 600;
+          border-radius: 12px;
+        }
+
         .section {
           margin-bottom: 30px;
         }
@@ -191,6 +281,64 @@ function buildReportHTML(data: ReportData): string {
           font-weight: 500;
         }
 
+        /* Executive Summary */
+        .executive-summary {
+          padding: 20px;
+          background: linear-gradient(135deg, ${COLORS.primary}10 0%, ${COLORS.secondary}10 100%);
+          border-radius: 12px;
+          border-left: 4px solid ${COLORS.primary};
+          margin-bottom: 20px;
+        }
+
+        .executive-summary-text {
+          font-size: 15px;
+          line-height: 1.6;
+          color: ${COLORS.textPrimary};
+        }
+
+        /* Risk Assessment */
+        .risk-assessment {
+          display: flex;
+          align-items: center;
+          gap: 20px;
+          padding: 20px;
+          background: ${COLORS.surfaceSecondary};
+          border-radius: 12px;
+        }
+
+        .risk-score {
+          width: 100px;
+          height: 100px;
+          border-radius: 50%;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          color: white;
+          font-weight: bold;
+        }
+
+        .risk-score-value {
+          font-size: 32px;
+        }
+
+        .risk-score-label {
+          font-size: 10px;
+          text-transform: uppercase;
+          opacity: 0.9;
+        }
+
+        .risk-details {
+          flex: 1;
+        }
+
+        .risk-level {
+          font-size: 20px;
+          font-weight: 600;
+          text-transform: uppercase;
+          margin-bottom: 8px;
+        }
+
         .summary-stats {
           display: flex;
           gap: 15px;
@@ -199,29 +347,31 @@ function buildReportHTML(data: ReportData): string {
 
         .stat-box {
           flex: 1;
-          min-width: 100px;
+          min-width: 80px;
           padding: 15px;
           text-align: center;
-          background: ${COLORS.surfaceSecondary};
+          background: white;
           border-radius: 8px;
+          box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         }
 
         .stat-value {
-          font-size: 32px;
+          font-size: 28px;
           font-weight: bold;
         }
 
         .stat-label {
-          font-size: 12px;
+          font-size: 11px;
           color: ${COLORS.textMuted};
         }
 
+        /* Findings */
         .finding {
-          padding: 15px;
+          padding: 20px;
           margin-bottom: 15px;
           background: #fff;
           border: 1px solid ${COLORS.border};
-          border-radius: 8px;
+          border-radius: 12px;
           page-break-inside: avoid;
         }
 
@@ -229,7 +379,8 @@ function buildReportHTML(data: ReportData): string {
           display: flex;
           align-items: center;
           gap: 10px;
-          margin-bottom: 10px;
+          margin-bottom: 12px;
+          flex-wrap: wrap;
         }
 
         .finding-number {
@@ -241,7 +392,7 @@ function buildReportHTML(data: ReportData): string {
         .badge {
           font-size: 10px;
           font-weight: 600;
-          padding: 2px 8px;
+          padding: 3px 10px;
           border-radius: 12px;
           text-transform: uppercase;
         }
@@ -250,6 +401,7 @@ function buildReportHTML(data: ReportData): string {
           font-size: 16px;
           font-weight: 600;
           margin-bottom: 8px;
+          color: ${COLORS.textPrimary};
         }
 
         .finding-description {
@@ -261,15 +413,128 @@ function buildReportHTML(data: ReportData): string {
         .finding-location {
           font-size: 13px;
           color: ${COLORS.textMuted};
+          margin-bottom: 12px;
         }
 
-        .finding-timestamp {
+        /* Compliance Analysis Box */
+        .compliance-analysis {
+          margin-top: 15px;
+          padding: 15px;
+          background: ${COLORS.surfaceSecondary};
+          border-radius: 8px;
+          border-left: 3px solid ${COLORS.primary};
+        }
+
+        .analysis-row {
+          margin-bottom: 8px;
+        }
+
+        .analysis-row:last-child {
+          margin-bottom: 0;
+        }
+
+        .analysis-label {
+          font-size: 11px;
+          font-weight: 600;
+          color: ${COLORS.textMuted};
+          text-transform: uppercase;
+          display: block;
+          margin-bottom: 2px;
+        }
+
+        .analysis-value {
+          font-size: 13px;
+          color: ${COLORS.textPrimary};
+        }
+
+        .standard-ref {
+          color: ${COLORS.primary};
+          font-weight: 500;
+        }
+
+        .warning-text {
+          color: ${COLORS.high};
+        }
+
+        /* Recommendations Table */
+        .recommendations-table {
+          width: 100%;
+          border-collapse: collapse;
+          font-size: 13px;
+        }
+
+        .recommendations-table th {
+          background: ${COLORS.primary};
+          color: white;
+          padding: 12px 10px;
+          text-align: left;
+          font-weight: 600;
+          font-size: 11px;
+          text-transform: uppercase;
+        }
+
+        .recommendations-table td {
+          padding: 12px 10px;
+          border-bottom: 1px solid ${COLORS.border};
+          vertical-align: top;
+        }
+
+        .recommendations-table tr:nth-child(even) {
+          background: ${COLORS.surfaceSecondary};
+        }
+
+        .priority-cell {
+          width: 50px;
+          text-align: center;
+          font-weight: 600;
+          color: ${COLORS.primary};
+        }
+
+        .standard-cell {
           font-size: 11px;
           color: ${COLORS.textMuted};
-          font-family: monospace;
-          margin-top: 8px;
         }
 
+        /* Regulatory References */
+        .reg-item {
+          padding: 15px;
+          margin-bottom: 10px;
+          background: ${COLORS.surfaceSecondary};
+          border-radius: 8px;
+          border-left: 3px solid ${COLORS.compliance};
+        }
+
+        .reg-name {
+          font-weight: 600;
+          color: ${COLORS.textPrimary};
+          margin-bottom: 4px;
+        }
+
+        .reg-section {
+          font-size: 12px;
+          color: ${COLORS.primary};
+          font-weight: 500;
+          margin-bottom: 4px;
+        }
+
+        .reg-relevance {
+          font-size: 13px;
+          color: ${COLORS.textSecondary};
+        }
+
+        /* Next Steps */
+        .next-steps-list {
+          padding-left: 20px;
+        }
+
+        .next-steps-list li {
+          font-size: 14px;
+          color: ${COLORS.textPrimary};
+          margin-bottom: 8px;
+          padding-left: 8px;
+        }
+
+        /* Disclaimer */
         .disclaimer {
           padding: 20px;
           background: #FFF8E6;
@@ -300,6 +565,7 @@ function buildReportHTML(data: ReportData): string {
           margin-bottom: 4px;
         }
 
+        /* Footer */
         .footer {
           margin-top: 40px;
           padding-top: 20px;
@@ -310,6 +576,16 @@ function buildReportHTML(data: ReportData): string {
         .footer-text {
           font-size: 11px;
           color: ${COLORS.textMuted};
+        }
+
+        .powered-by {
+          margin-top: 10px;
+          font-size: 10px;
+          color: ${COLORS.textMuted};
+        }
+
+        .powered-by strong {
+          color: ${COLORS.primary};
         }
 
         .signature-section {
@@ -347,8 +623,9 @@ function buildReportHTML(data: ReportData): string {
       <!-- Header -->
       <div class="header">
         <div class="logo">${APP_CONFIG.name}</div>
-        <div class="subtitle">Site Risk Assessment Report</div>
+        <div class="subtitle">AI-Powered Site Risk Assessment Report</div>
         <h1 class="report-title">${session.site_name}</h1>
+        <div class="ai-badge">✨ Powered by Gemini 3 Pro</div>
       </div>
 
       <!-- Site Information -->
@@ -382,38 +659,105 @@ function buildReportHTML(data: ReportData): string {
         </div>
       </div>
 
-      <!-- Summary -->
+      <!-- Executive Summary -->
       <div class="section">
-        <h2 class="section-title">Summary</h2>
-        <div class="summary-stats">
-          <div class="stat-box">
-            <div class="stat-value" style="color: ${COLORS.primary}">${findings.length}</div>
-            <div class="stat-label">Total Findings</div>
+        <h2 class="section-title">Executive Summary</h2>
+        <div class="executive-summary">
+          <p class="executive-summary-text">${analysis.executiveSummary}</p>
+        </div>
+
+        <!-- Risk Assessment -->
+        <div class="risk-assessment">
+          <div class="risk-score" style="background: ${getRiskLevelColor(analysis.overallRiskLevel)}">
+            <span class="risk-score-value">${analysis.riskScore}</span>
+            <span class="risk-score-label">Risk Score</span>
           </div>
-          <div class="stat-box">
-            <div class="stat-value" style="color: ${COLORS.critical}">${criticalCount}</div>
-            <div class="stat-label">Critical</div>
-          </div>
-          <div class="stat-box">
-            <div class="stat-value" style="color: ${COLORS.high}">${highCount}</div>
-            <div class="stat-label">High</div>
-          </div>
-          <div class="stat-box">
-            <div class="stat-value" style="color: ${COLORS.medium}">${mediumCount}</div>
-            <div class="stat-label">Medium</div>
-          </div>
-          <div class="stat-box">
-            <div class="stat-value" style="color: ${COLORS.low}">${lowCount}</div>
-            <div class="stat-label">Low</div>
+          <div class="risk-details">
+            <div class="risk-level" style="color: ${getRiskLevelColor(analysis.overallRiskLevel)}">
+              ${analysis.overallRiskLevel} Risk
+            </div>
+            <div class="summary-stats">
+              <div class="stat-box">
+                <div class="stat-value" style="color: ${COLORS.primary}">${findings.length}</div>
+                <div class="stat-label">Total Findings</div>
+              </div>
+              <div class="stat-box">
+                <div class="stat-value" style="color: ${COLORS.critical}">${criticalCount}</div>
+                <div class="stat-label">Critical</div>
+              </div>
+              <div class="stat-box">
+                <div class="stat-value" style="color: ${COLORS.high}">${highCount}</div>
+                <div class="stat-label">High</div>
+              </div>
+              <div class="stat-box">
+                <div class="stat-value" style="color: ${COLORS.medium}">${mediumCount}</div>
+                <div class="stat-label">Medium</div>
+              </div>
+              <div class="stat-box">
+                <div class="stat-value" style="color: ${COLORS.low}">${lowCount}</div>
+                <div class="stat-label">Low</div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
 
-      <!-- Findings -->
+      <!-- Findings with Compliance Analysis -->
       <div class="section">
-        <h2 class="section-title">Findings (${findings.length})</h2>
-        ${findings.length === 0 ? '<p style="color: ' + COLORS.textMuted + '">No findings recorded during this inspection.</p>' : findingsHTML}
+        <h2 class="section-title">Detailed Findings & Compliance Analysis</h2>
+        ${findings.length === 0 ? '<p style="color: ' + COLORS.textMuted + '">No findings recorded during this inspection.</p>' : analyzedFindingsHTML}
       </div>
+
+      <!-- Recommendations -->
+      ${
+        analysis.recommendations.length > 0
+          ? `
+      <div class="section">
+        <h2 class="section-title">Prioritized Recommendations</h2>
+        <table class="recommendations-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Action Required</th>
+              <th>Responsibility</th>
+              <th>Timeline</th>
+              <th>Standard Reference</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${recommendationsHTML}
+          </tbody>
+        </table>
+      </div>
+      `
+          : ''
+      }
+
+      <!-- Regulatory References -->
+      ${
+        analysis.regulatoryReferences.length > 0
+          ? `
+      <div class="section">
+        <h2 class="section-title">Applicable Regulations & Standards</h2>
+        ${regulatoryHTML}
+      </div>
+      `
+          : ''
+      }
+
+      <!-- Next Steps -->
+      ${
+        analysis.nextSteps.length > 0
+          ? `
+      <div class="section">
+        <h2 class="section-title">Recommended Next Steps</h2>
+        <ol class="next-steps-list">
+          ${nextStepsHTML}
+        </ol>
+      </div>
+      `
+          : ''
+      }
 
       <!-- Disclaimer -->
       <div class="section">
@@ -447,6 +791,9 @@ function buildReportHTML(data: ReportData): string {
         <p class="footer-text">
           Generated by ${APP_CONFIG.name} • ${APP_CONFIG.company}<br>
           ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+        </p>
+        <p class="powered-by">
+          AI Analysis by <strong>Gemini 3 Flash</strong> (Real-time Detection) & <strong>Gemini 3 Pro</strong> (Compliance Reasoning)
         </p>
       </div>
     </body>
