@@ -11,9 +11,10 @@ export const APP_CONFIG = {
 // Gemini Live API configuration
 export const GEMINI_CONFIG = {
   apiKey: process.env.EXPO_PUBLIC_GEMINI_API_KEY || '',
-  // Use gemini-2.0-flash-exp which supports the Live API
-  // Alternative: 'gemini-2.0-flash-live-001' for dedicated live model
-  model: 'gemini-2.0-flash-exp',
+  // NOTE: Gemini 3 (gemini-3-flash-preview, gemini-3-pro-preview) does NOT support Live API yet!
+  // For real-time streaming with video/audio, we must use Gemini 2.5 Flash Native Audio
+  // This is the most advanced model for Live API with native audio capabilities
+  model: 'gemini-2.5-flash-preview-native-audio-dialog',
   // Frame capture settings
   frameCaptureFPS: 1, // 1 frame per second for analysis
   frameQuality: 0.5, // JPEG quality (0-1)
