@@ -1,8 +1,8 @@
 import { GEMINI_CONFIG } from '../config/constants';
 import type { SessionFinding, FindingCategory, FindingSeverity } from '../types/session';
 
-// Gemini Live API WebSocket URL
-const GEMINI_LIVE_WS_URL = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent';
+// Gemini Live API WebSocket URL (v1beta is the correct version)
+const GEMINI_LIVE_WS_URL = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
 
 // System prompt for site inspection
 const SYSTEM_PROMPT = `You are an expert site safety and risk assessment AI assistant conducting a live walkthrough inspection of a facility.
@@ -92,9 +92,12 @@ export class GeminiLiveClient {
   private ws: WebSocket | null = null;
   private config: GeminiLiveConfig;
   private isConnected = false;
+  private isSetupComplete = false;
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 3;
   private sessionStartTime: number = 0;
+  private connectResolve: (() => void) | null = null;
+  private connectReject: ((error: Error) => void) | null = null;
 
   constructor(config: GeminiLiveConfig) {
     this.config = config;
@@ -107,12 +110,17 @@ export class GeminiLiveClient {
     return new Promise((resolve, reject) => {
       const url = `${GEMINI_LIVE_WS_URL}?key=${this.config.apiKey}`;
 
+      // Store resolve/reject for use in handleMessage when setup completes
+      this.connectResolve = resolve;
+      this.connectReject = reject;
+
       try {
+        console.log('Gemini Live: Attempting connection to:', url.replace(this.config.apiKey, 'API_KEY_HIDDEN'));
         this.ws = new WebSocket(url);
         this.sessionStartTime = Date.now();
 
         this.ws.onopen = () => {
-          console.log('Gemini Live: WebSocket connected');
+          console.log('Gemini Live: WebSocket opened, sending setup message...');
           this.sendSetupMessage();
         };
 
@@ -122,29 +130,50 @@ export class GeminiLiveClient {
 
         this.ws.onerror = (error) => {
           console.error('Gemini Live: WebSocket error', error);
+          this.isConnected = false;
+          this.isSetupComplete = false;
+          this.config.onConnectionChange(false);
           this.config.onError(new Error('WebSocket connection error'));
-          reject(error);
+          if (this.connectReject) {
+            this.connectReject(new Error('WebSocket connection error'));
+            this.connectReject = null;
+            this.connectResolve = null;
+          }
         };
 
         this.ws.onclose = (event) => {
           console.log('Gemini Live: WebSocket closed', event.code, event.reason);
           this.isConnected = false;
+          this.isSetupComplete = false;
           this.config.onConnectionChange(false);
+
+          // Reject promise if we haven't completed setup yet
+          if (this.connectReject) {
+            this.connectReject(new Error(`WebSocket closed: ${event.code} ${event.reason}`));
+            this.connectReject = null;
+            this.connectResolve = null;
+          }
 
           // Attempt reconnect if unexpected close
           if (event.code !== 1000 && this.reconnectAttempts < this.maxReconnectAttempts) {
             this.reconnectAttempts++;
+            console.log(`Gemini Live: Reconnecting (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
             setTimeout(() => this.connect(), 2000);
           }
         };
 
-        // Resolve after setup is sent
+        // Timeout for connection
         setTimeout(() => {
-          if (this.ws?.readyState === WebSocket.OPEN) {
-            resolve();
+          if (!this.isSetupComplete && this.connectReject) {
+            console.error('Gemini Live: Connection timeout');
+            this.connectReject(new Error('Connection timeout - setup not completed'));
+            this.connectReject = null;
+            this.connectResolve = null;
+            this.disconnect();
           }
-        }, 1000);
+        }, 15000);
       } catch (error) {
+        console.error('Gemini Live: Failed to create WebSocket', error);
         reject(error);
       }
     });
@@ -152,28 +181,30 @@ export class GeminiLiveClient {
 
   /**
    * Send initial setup message with system prompt
+   * Using BidiGenerateContentSetup format as per Gemini Live API spec
    */
   private sendSetupMessage(): void {
-    const setupMessage: GeminiMessage = {
+    // The setup message format for Gemini Live API
+    const setupMessage = {
       setup: {
         model: `models/${GEMINI_CONFIG.model}`,
-        generation_config: {
-          response_modalities: ['AUDIO', 'TEXT'],
-          speech_config: {
-            voice_config: {
-              prebuilt_voice_config: {
-                voice_name: 'Aoede', // Clear, professional voice
+        generationConfig: {
+          responseModalities: ['AUDIO', 'TEXT'],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: {
+                voiceName: 'Aoede', // Clear, professional voice
               },
             },
           },
         },
-        system_instruction: {
+        systemInstruction: {
           parts: [{ text: SYSTEM_PROMPT }],
         },
         // Define function for structured findings
         tools: [
           {
-            function_declarations: [
+            functionDeclarations: [
               {
                 name: 'report_finding',
                 description: 'Report a safety, security, compliance, or maintenance finding',
@@ -212,9 +243,9 @@ export class GeminiLiveClient {
       },
     };
 
+    console.log('Gemini Live: Sending setup message for model:', GEMINI_CONFIG.model);
     this.send(setupMessage);
-    this.isConnected = true;
-    this.config.onConnectionChange(true);
+    // Note: isConnected will be set to true when we receive setupComplete
   }
 
   /**
@@ -224,6 +255,23 @@ export class GeminiLiveClient {
     try {
       if (typeof data === 'string') {
         const message = JSON.parse(data);
+        console.log('Gemini Live: Received message type:', Object.keys(message).join(', '));
+
+        // Handle setup complete - this is critical for connection flow
+        if (message.setupComplete) {
+          console.log('Gemini Live: Setup complete, connection ready');
+          this.isSetupComplete = true;
+          this.isConnected = true;
+          this.config.onConnectionChange(true);
+
+          // Resolve the connect promise
+          if (this.connectResolve) {
+            this.connectResolve();
+            this.connectResolve = null;
+            this.connectReject = null;
+          }
+          return;
+        }
 
         // Handle server content (text/audio responses)
         if (message.serverContent) {
@@ -232,14 +280,20 @@ export class GeminiLiveClient {
           for (const part of parts) {
             // Text response
             if (part.text) {
+              console.log('Gemini Live: Received text:', part.text.substring(0, 100));
               this.config.onTextResponse(part.text);
             }
 
-            // Audio response
+            // Audio response (inline data)
             if (part.inlineData?.mimeType?.startsWith('audio/')) {
               const audioData = this.base64ToArrayBuffer(part.inlineData.data);
               this.config.onAudioResponse(audioData);
             }
+          }
+
+          // Check for turn complete signal
+          if (message.serverContent.turnComplete) {
+            console.log('Gemini Live: Server turn complete');
           }
         }
 
@@ -249,6 +303,7 @@ export class GeminiLiveClient {
 
           for (const call of functionCalls) {
             if (call.name === 'report_finding') {
+              console.log('Gemini Live: Finding reported:', call.args.title);
               const finding: Partial<SessionFinding> = {
                 timestamp_seconds: (Date.now() - this.sessionStartTime) / 1000,
                 category: call.args.category as FindingCategory,
@@ -266,12 +321,14 @@ export class GeminiLiveClient {
           }
         }
 
-        // Handle setup complete
-        if (message.setupComplete) {
-          console.log('Gemini Live: Setup complete');
+        // Handle errors from the server
+        if (message.error) {
+          console.error('Gemini Live: Server error:', message.error);
+          this.config.onError(new Error(message.error.message || 'Server error'));
         }
       } else {
         // Binary audio data
+        console.log('Gemini Live: Received binary audio data');
         this.config.onAudioResponse(data);
       }
     } catch (error) {
@@ -281,15 +338,20 @@ export class GeminiLiveClient {
 
   /**
    * Send video frame for analysis
+   * Uses realtimeInput format as per Gemini Live API spec
    */
   sendVideoFrame(base64Data: string): void {
-    if (!this.isConnected || !this.ws) return;
+    if (!this.isSetupComplete || !this.ws) {
+      console.log('Gemini Live: Cannot send frame, not ready');
+      return;
+    }
 
-    const message: GeminiMessage = {
-      realtime_input: {
-        media_chunks: [
+    // Use realtimeInput for streaming media
+    const message = {
+      realtimeInput: {
+        mediaChunks: [
           {
-            mime_type: 'image/jpeg',
+            mimeType: 'image/jpeg',
             data: base64Data,
           },
         ],
@@ -301,15 +363,16 @@ export class GeminiLiveClient {
 
   /**
    * Send audio chunk for voice input
+   * Uses realtimeInput format as per Gemini Live API spec
    */
   sendAudioChunk(base64Data: string): void {
-    if (!this.isConnected || !this.ws) return;
+    if (!this.isSetupComplete || !this.ws) return;
 
-    const message: GeminiMessage = {
-      realtime_input: {
-        media_chunks: [
+    const message = {
+      realtimeInput: {
+        mediaChunks: [
           {
-            mime_type: 'audio/pcm',
+            mimeType: 'audio/pcm;rate=16000',
             data: base64Data,
           },
         ],
@@ -321,19 +384,20 @@ export class GeminiLiveClient {
 
   /**
    * Send text message (user question)
+   * Uses clientContent format for non-streaming input
    */
   sendTextMessage(text: string): void {
-    if (!this.isConnected || !this.ws) return;
+    if (!this.isSetupComplete || !this.ws) return;
 
-    const message: GeminiMessage = {
-      client_content: {
+    const message = {
+      clientContent: {
         turns: [
           {
             role: 'user',
             parts: [{ text }],
           },
         ],
-        turn_complete: true,
+        turnComplete: true,
       },
     };
 
@@ -360,6 +424,13 @@ export class GeminiLiveClient {
   }
 
   /**
+   * Check if setup is complete and ready to send data
+   */
+  isReady(): boolean {
+    return this.isSetupComplete && this.ws?.readyState === WebSocket.OPEN;
+  }
+
+  /**
    * Send message through WebSocket
    */
   private send(message: object): void {
@@ -372,12 +443,16 @@ export class GeminiLiveClient {
    * Disconnect from Gemini Live API
    */
   disconnect(): void {
+    console.log('Gemini Live: Disconnecting...');
     if (this.ws) {
       this.ws.close(1000, 'Session ended');
       this.ws = null;
     }
     this.isConnected = false;
+    this.isSetupComplete = false;
     this.reconnectAttempts = 0;
+    this.connectResolve = null;
+    this.connectReject = null;
   }
 
   /**

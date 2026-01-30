@@ -47,6 +47,8 @@ export default function LiveInspectionScreen() {
   const [isRecording, setIsRecording] = useState(false);
   const [showFindingToast, setShowFindingToast] = useState(false);
   const [latestFinding, setLatestFinding] = useState<SessionFinding | null>(null);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [isConnecting, setIsConnecting] = useState(true);
 
   const cameraRef = useRef<CameraView>(null);
   const geminiClientRef = useRef<GeminiLiveClient | null>(null);
@@ -99,13 +101,19 @@ export default function LiveInspectionScreen() {
   const initializeGemini = useCallback(async () => {
     if (!GEMINI_CONFIG.apiKey) {
       console.warn('Gemini API key not configured');
-      setError('AI service not configured');
+      setConnectionError('AI service not configured. Please add EXPO_PUBLIC_GEMINI_API_KEY to your .env file.');
+      setIsConnecting(false);
       return;
     }
+
+    console.log('Initializing Gemini with API key:', GEMINI_CONFIG.apiKey.substring(0, 10) + '...');
+    setIsConnecting(true);
+    setConnectionError(null);
 
     try {
       geminiClientRef.current = createGeminiLiveClient({
         onTextResponse: (text) => {
+          console.log('AI Text Response:', text);
           setLastAIMessage(text);
         },
         onAudioResponse: (audioData) => {
@@ -135,8 +143,11 @@ export default function LiveInspectionScreen() {
           }
         },
         onConnectionChange: (connected) => {
+          console.log('Connection change:', connected);
           setConnectedToAI(connected);
+          setIsConnecting(false);
           if (connected) {
+            setConnectionError(null);
             startFrameCapture();
           } else {
             stopFrameCapture();
@@ -144,21 +155,28 @@ export default function LiveInspectionScreen() {
         },
         onError: (error) => {
           console.error('Gemini error:', error);
+          setConnectionError(error.message);
+          setIsConnecting(false);
           setError(error.message);
         },
       });
 
+      console.log('Connecting to Gemini Live API...');
       await geminiClientRef.current.connect();
+      console.log('Gemini connection successful');
     } catch (err: any) {
       console.error('Failed to initialize Gemini:', err);
+      setConnectionError(err.message || 'Failed to connect to AI service');
+      setIsConnecting(false);
       setError('Failed to connect to AI service');
     }
   }, [sessionId]);
 
   const startFrameCapture = useCallback(() => {
+    console.log('Starting frame capture at', GEMINI_CONFIG.frameCaptureFPS, 'FPS');
     // Capture frames at configured FPS
     frameIntervalRef.current = setInterval(async () => {
-      if (cameraRef.current && geminiClientRef.current?.getIsConnected()) {
+      if (cameraRef.current && geminiClientRef.current?.isReady()) {
         try {
           const photo = await cameraRef.current.takePictureAsync({
             quality: GEMINI_CONFIG.frameQuality,
@@ -167,6 +185,7 @@ export default function LiveInspectionScreen() {
           });
 
           if (photo?.base64) {
+            console.log('Sending frame, size:', Math.round(photo.base64.length / 1024), 'KB');
             geminiClientRef.current.sendVideoFrame(photo.base64);
           }
         } catch (err) {
@@ -278,9 +297,13 @@ export default function LiveInspectionScreen() {
               <Text style={styles.duration}>{formatTime(elapsedSeconds)}</Text>
             </View>
             <View style={styles.headerRight}>
-              <View style={[styles.connectionDot, isConnectedToAI && styles.connectionDotConnected]} />
+              <View style={[
+                styles.connectionDot,
+                isConnectedToAI && styles.connectionDotConnected,
+                connectionError && styles.connectionDotError
+              ]} />
               <Text style={styles.connectionText}>
-                {isConnectedToAI ? 'AI Connected' : 'Connecting...'}
+                {connectionError ? 'Error' : isConnectedToAI ? 'AI Connected' : isConnecting ? 'Connecting...' : 'Disconnected'}
               </Text>
             </View>
           </View>
@@ -319,8 +342,21 @@ export default function LiveInspectionScreen() {
           </Animated.View>
         )}
 
+        {/* Connection Error Overlay */}
+        {connectionError && (
+          <View style={styles.errorOverlay}>
+            <Text style={styles.errorText}>⚠️ {connectionError}</Text>
+            <TouchableOpacity
+              style={styles.retryButton}
+              onPress={() => initializeGemini()}
+            >
+              <Text style={styles.retryButtonText}>Retry Connection</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* AI Message Overlay */}
-        {lastAIMessage && (
+        {lastAIMessage && !connectionError && (
           <View style={styles.aiMessageOverlay}>
             <Text style={styles.aiMessageText} numberOfLines={3}>
               🤖 {lastAIMessage}
@@ -418,6 +454,9 @@ const styles = StyleSheet.create({
   },
   connectionDotConnected: {
     backgroundColor: COLORS.success,
+  },
+  connectionDotError: {
+    backgroundColor: COLORS.error,
   },
   connectionText: {
     fontSize: TYPOGRAPHY.fontSize.sm,
@@ -528,5 +567,35 @@ const styles = StyleSheet.create({
   },
   flipButtonText: {
     fontSize: 24,
+  },
+
+  // Error Overlay
+  errorOverlay: {
+    position: 'absolute',
+    top: '30%',
+    left: SPACING.md,
+    right: SPACING.md,
+    zIndex: 25,
+    backgroundColor: 'rgba(220, 38, 38, 0.95)',
+    padding: SPACING.lg,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  errorText: {
+    fontSize: TYPOGRAPHY.fontSize.base,
+    color: '#FFF',
+    textAlign: 'center',
+    marginBottom: SPACING.md,
+  },
+  retryButton: {
+    backgroundColor: '#FFF',
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.sm,
+    borderRadius: 8,
+  },
+  retryButtonText: {
+    fontSize: TYPOGRAPHY.fontSize.base,
+    fontWeight: '600',
+    color: COLORS.error,
   },
 });

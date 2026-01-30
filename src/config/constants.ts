@@ -11,7 +11,9 @@ export const APP_CONFIG = {
 // Gemini Live API configuration
 export const GEMINI_CONFIG = {
   apiKey: process.env.EXPO_PUBLIC_GEMINI_API_KEY || '',
-  model: 'gemini-2.0-flash-live', // Live API model
+  // Use gemini-2.0-flash-exp which supports the Live API
+  // Alternative: 'gemini-2.0-flash-live-001' for dedicated live model
+  model: 'gemini-2.0-flash-exp',
   // Frame capture settings
   frameCaptureFPS: 1, // 1 frame per second for analysis
   frameQuality: 0.5, // JPEG quality (0-1)
