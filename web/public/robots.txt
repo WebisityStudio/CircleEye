@@ -1,0 +1,23 @@
+# robots.txt for CircleOverwatch
+# https://www.circleoverwatch.com
+
+User-agent: *
+Allow: /
+Allow: /privacy
+Allow: /terms
+
+# Disallow authentication and app routes (require login)
+Disallow: /login
+Disallow: /signup
+Disallow: /auth/
+Disallow: /app
+Disallow: /dashboard
+Disallow: /settings
+Disallow: /news
+Disallow: /weather-alerts
+
+# Sitemap location
+Sitemap: https://www.circleoverwatch.com/sitemap.xml
+
+# Crawl-delay for polite crawling
+Crawl-delay: 1

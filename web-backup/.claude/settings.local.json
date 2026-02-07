@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run dev:*)",
+      "Bash(dir:*)",
+      "Bash(findstr:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npm run build:*)",
+      "WebSearch",
+      "WebFetch(domain:rss.feedspot.com)",
+      "Bash(curl:*)",
+      "WebFetch(domain:open-meteo.com)",
+      "WebFetch(domain:www.metoffice.gov.uk)",
+      "Bash(npx vitest:*)",
+      "mcp__chrome-devtools__take_snapshot",
+      "Bash(find:*)",
+      "Bash(git -C D:CircleOverwatchWeb diff src/components/settings/AnalyticsPrivacyPage.tsx)",
+      "Bash(npm install:*)",
+      "Bash(git -C \"D:\\\\CircleOverwatchWeb\" diff src/components/settings/AnalyticsPrivacyPage.tsx)",
+      "Bash(cat:*)",
+      "Bash(xargs:*)",
+      "Bash(test:*)",
+      "Bash(npm run test:run:*)",
+      "Bash(npm run type-check:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

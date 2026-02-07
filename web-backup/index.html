@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-NBXZTCB0RX"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-NBXZTCB0RX');
+    </script>
+
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/icons/CIRCLE UK-04.svg" />
+    <meta name="theme-color" content="#123958" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CircleOverwatch - Real-time Threat Intelligence Platform</title>
+    <meta name="description" content="Comprehensive UK risk monitoring platform tracking terrorism threats, crime rates, weather warnings, and security alerts in real-time." />
+    <meta name="keywords" content="UK security, terrorism threats, crime statistics, weather warnings, risk assessment" />
+
+    <!-- Canonical URL -->
+    <link rel="canonical" href="https://www.circleoverwatch.com/" />
+
+    <!-- Open Graph Meta Tags -->
+    <meta property="og:title" content="CircleOverwatch - Real-time Threat Intelligence" />
+    <meta property="og:description" content="Monitor terrorism threats, crime patterns, and weather risks across the United Kingdom" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://www.circleoverwatch.com/" />
+    <meta property="og:site_name" content="CircleOverwatch" />
+    <meta property="og:locale" content="en_GB" />
+    <meta property="og:image" content="https://www.circleoverwatch.com/brand/Logo_ColorCUKG.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="CircleOverwatch - UK Threat Intelligence Platform" />
+
+    <!-- Twitter Card Meta Tags -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="CircleOverwatch - Real-time Threat Intelligence" />
+    <meta name="twitter:description" content="Monitor terrorism threats, crime patterns, and weather risks across the United Kingdom" />
+    <meta name="twitter:image" content="https://www.circleoverwatch.com/brand/Logo_ColorCUKG.png" />
+    <meta name="twitter:image:alt" content="CircleOverwatch - UK Threat Intelligence Platform" />
+
+    <!-- Security Headers -->
+    <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+    <meta http-equiv="X-Frame-Options" content="DENY" />
+    <meta http-equiv="X-XSS-Protection" content="1; mode=block" />
+
+    <!-- Preconnect to external domains for performance -->
+    <link rel="preconnect" href="https://www.googletagmanager.com" />
+    <link rel="preconnect" href="https://js.hs-scripts.com" />
+
+    <!-- JSON-LD Structured Data -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      "name": "CircleOverwatch",
+      "url": "https://www.circleoverwatch.com",
+      "logo": "https://www.circleoverwatch.com/brand/Logo_ColorCUKG.png",
+      "description": "Real-time threat intelligence platform for UK security monitoring",
+      "areaServed": {
+        "@type": "Country",
+        "name": "United Kingdom"
+      },
+      "sameAs": []
+    }
+    </script>
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      "name": "CircleOverwatch",
+      "url": "https://www.circleoverwatch.com",
+      "description": "Comprehensive UK risk monitoring platform tracking terrorism threats, crime rates, weather warnings, and security alerts in real-time.",
+      "potentialAction": {
+        "@type": "SearchAction",
+        "target": "https://www.circleoverwatch.com/search?q={search_term_string}",
+        "query-input": "required name=search_term_string"
+      }
+    }
+    </script>
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "CircleOverwatch",
+      "applicationCategory": "SecurityApplication",
+      "operatingSystem": "Web",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "GBP"
+      },
+      "description": "Real-time threat intelligence and security monitoring platform for the United Kingdom",
+      "featureList": [
+        "Terrorism threat monitoring",
+        "Crime statistics tracking",
+        "Weather warnings",
+        "Real-time security alerts"
+      ]
+    }
+    </script>
+    
+    <style>
+      /* Custom scrollbar for dark theme */
+      ::-webkit-scrollbar {
+        width: 8px;
+      }
+      ::-webkit-scrollbar-track {
+        background: #1f2937;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #226A5A;
+        border-radius: 4px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: #1e5d4f;
+      }
+      
+      /* Loading animation */
+      .loading-spinner {
+        border: 2px solid #1f2937;
+        border-top: 2px solid #226A5A;
+        border-radius: 50%;
+        width: 20px;
+        height: 20px;
+        animation: spin 1s linear infinite;
+      }
+      
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+      
+      /* Custom animations */
+      @keyframes fadeInUp {
+        from {
+          opacity: 0;
+          transform: translateY(30px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+      
+      .animate-fade-in-up {
+        animation: fadeInUp 0.6s ease-out;
+      }
+    </style>
+  </head>
+  <body class="bg-black">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+    
+    <!-- Emergency Alert Script -->
+    <script>
+      // Emergency alert system
+      window.emergencyAlert = function(message, level = 'warning') {
+        const alertDiv = document.createElement('div');
+        alertDiv.className = `fixed top-0 left-0 right-0 z-50 p-4 text-center text-white font-bold ${
+          level === 'critical' ? 'bg-red-600' :
+          level === 'warning' ? 'bg-orange-600' : 'bg-yellow-600'
+        }`;
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'max-w-4xl mx-auto flex items-center justify-between';
+
+        const text = document.createElement('span');
+        text.textContent = `!! ${message}`;
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'text-white font-bold';
+        button.setAttribute('aria-label', 'Dismiss alert');
+        button.textContent = 'x';
+        button.addEventListener('click', () => alertDiv.remove());
+
+        wrapper.append(text, button);
+        alertDiv.appendChild(wrapper);
+        document.body.insertBefore(alertDiv, document.body.firstChild);
+      };
+    </script>
+
+    <!-- Start of HubSpot Embed Code -->
+    <script type="text/javascript" id="hs-script-loader" async defer src="//js.hs-scripts.com/20415666.js"></script>
+    <!-- End of HubSpot Embed Code -->
+  </body>
+</html>

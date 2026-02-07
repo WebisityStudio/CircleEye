@@ -1,0 +1,67 @@
+{
+  "expo": {
+    "name": "Circle Eye",
+    "slug": "circle-eye",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "scheme": "circle-eye",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#1E3A5F"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.circleuk.eye",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Camera is required for live site inspections",
+        "NSMicrophoneUsageDescription": "Microphone is required for voice interaction with AI",
+        "NSLocationWhenInUseUsageDescription": "Location is required to record inspection site coordinates"
+      }
+    },
+    "android": {
+      "package": "com.circleuk.eye",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#1E3A5F"
+      },
+      "edgeToEdgeEnabled": true,
+      "permissions": [
+        "CAMERA",
+        "RECORD_AUDIO",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Camera is required for live site inspections",
+          "microphonePermission": "Microphone is required for voice interaction with AI",
+          "recordAudioAndroid": true
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Location is required to record inspection site coordinates"
+        }
+      ],
+      "expo-secure-store"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "your-project-id"
+      }
+    }
+  }
+}
